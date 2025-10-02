@@ -1,0 +1,9 @@
+postgres_data/
+rabbitmq_data/
+minio_data/
+server/__pycache__/
+mlWorker/__pycache__/
+.idea
+.vscode
+.cursor
+.env 

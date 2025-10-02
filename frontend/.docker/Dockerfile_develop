@@ -1,0 +1,17 @@
+# Base image
+FROM node:18
+
+RUN npm install -g pnpm
+
+WORKDIR /app
+
+# Copy dependency definitions to leverage Docker cache
+COPY package.json pnpm-lock.yaml ./
+
+# Install project dependencies
+RUN pnpm install
+
+# Copy the rest of the application source code
+COPY . .
+
+EXPOSE 8080

@@ -1,0 +1,253 @@
+.files-tab {
+  padding: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &__header {
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    p {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: #aaaaaa;
+    }
+  }
+
+  &__gallery-button {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    
+    &:hover {
+      background: var(--dark-primary-color);
+      transform: translateY(-1px);
+    }
+    
+    &:active {
+      transform: translateY(0);
+    }
+  }
+
+  &__upload-area {
+    border: 2px dashed #555555;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background-color: #2a2a2a;
+
+    &:hover {
+      border-color: #777777;
+      background-color: #333333;
+    }
+
+    &--drag-over {
+      border-color: var(--primary-color);
+      background-color: rgba(var(--primary-color-rgb), 0.1);
+    }
+  }
+
+  &__upload-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__upload-icon {
+    font-size: 32px;
+    opacity: 0.7;
+  }
+
+  &__upload-text {
+    font-size: 16px;
+    color: #ffffff;
+
+    strong {
+      color: var(--primary-color);
+    }
+  }
+
+  &__upload-hint {
+    font-size: 12px;
+    color: #aaaaaa;
+  }
+
+  &__files-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__empty {
+    text-align: center;
+    color: #aaaaaa;
+    font-style: italic;
+    padding: 32px;
+  }
+}
+
+.file-item {
+  background-color: #2a2a2a;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #444444;
+
+  &__header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+
+    &:hover {
+      background-color: #333333;
+    }
+  }
+
+  &__info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__details {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__name {
+    font-weight: 500;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__meta {
+    font-size: 12px;
+    color: #aaaaaa;
+    margin-top: 2px;
+  }
+
+  &__actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__content {
+    padding: 16px;
+    border-top: 1px solid #444444;
+    background-color: #1e1e1e;
+  }
+
+  &__error {
+    color: #ff6b6b;
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  &__filepath {
+    font-size: 14px;
+    color: #cccccc;
+    margin-bottom: 12px;
+    word-break: break-all;
+  }
+
+  &__ocr-result {
+    strong {
+      color: #ffffff;
+      display: block;
+      margin-bottom: 8px;
+    }
+  }
+
+  &__ocr-text {
+    background-color: #333333;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #ffffff;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    margin-bottom: 12px;
+  }
+
+  &__markdown {
+    strong {
+      color: #ffffff;
+      display: block;
+      margin-bottom: 8px;
+    }
+  }
+
+  &__markdown-content {
+    background-color: #333333;
+    padding: 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #cccccc;
+    max-height: 150px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    font-family: 'Courier New', monospace;
+  }
+}
+
+.file-status-icon {
+  font-size: 20px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  &--pending {
+    background-color: rgba(255, 193, 7, 0.2);
+  }
+
+  &--processing {
+    background-color: rgba(0, 123, 255, 0.2);
+    animation: spin 1s linear infinite;
+  }
+
+  &--done {
+    background-color: rgba(40, 167, 69, 0.2);
+  }
+
+  &--error {
+    background-color: rgba(220, 53, 69, 0.2);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

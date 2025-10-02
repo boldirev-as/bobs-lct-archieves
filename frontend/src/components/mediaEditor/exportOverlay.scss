@@ -1,0 +1,109 @@
+.export-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  &__header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+    
+    h3 {
+      margin: 0;
+      color: var(--primary-text-color);
+      font-size: 18px;
+      font-weight: 500;
+    }
+  }
+
+  &__content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  &__section {
+    margin-bottom: 24px;
+    
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  &__section-title {
+    margin: 0 0 12px 0;
+    color: var(--primary-text-color);
+    font-size: 16px;
+    font-weight: 500;
+    opacity: 0.8;
+  }
+
+  &__grid {
+    display: grid;
+    gap: 8px;
+    
+    &--entities {
+      grid-template-columns: repeat(4, 1fr);
+    }
+    
+    &--blocks {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  &__item {
+    margin-bottom: 0; // Reset since we use grid gap now
+  }
+
+  &__block-indicator {
+    display: inline-block;
+    background-color: #2196F3;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-right: 8px;
+    min-width: 60px;
+    text-align: center;
+  }
+
+  &__entity-indicator {
+    display: inline-block;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-right: 8px;
+    min-width: 60px;
+    text-align: center;
+  }
+
+  &__entity-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    
+    .iconTsx {
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+  }
+
+  &__entity-item {
+    .media-editor__radio-content {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+  }
+}
