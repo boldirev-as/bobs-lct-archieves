@@ -8,7 +8,7 @@ https://drive.google.com/drive/folders/1YRlNWaCbIptM1gM2B63z88xtDxTE2SJ1?usp=sha
 
 ## Попробовать в проде
 
-https://bobs-ai.ru/
+http://bobs-ai.ru/
 
 ## Возможности
 
