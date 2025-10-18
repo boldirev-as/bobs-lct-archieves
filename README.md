@@ -20,7 +20,6 @@ http://bobs-ai.ru/
 
 ## Требования
 
-* **GPU**: одна видеокарта с объёмом памяти не менее **14 ГБ** (например, NVIDIA V100).
 * **Docker** и **Docker Compose**.
 * **Git** ≥ 2.30.
 
@@ -28,18 +27,7 @@ http://bobs-ai.ru/
 
 ## Используемые технологии
 
-Для удобства на данный момент используется **API Yandex GPT5** для извлечения сущностей, однако всегда можно перенести решение в локальный
-контур.
-Это возможно, так как решение является **опенсорсным** и внесено в **реестр отечественного ПО**.
-
-Для корректной работы необходимо в `docker-compose.yml` для сервиса `worker` указать переменные окружения:
-
-```yaml
-environment:
-# YANDEX_IAM_TOKEN: <ваш токен IAM>
-# YANDEX_OAUTH_TOKEN: <ваш OAuth токен>
-# YANDEX_FOLDER_ID: <ваш Folder ID>
-```
+Решение является **опенсорсным** и внесено в **реестр отечественного ПО**.
 
 ---
 
@@ -52,25 +40,7 @@ git clone https://github.com/boldirev-as/bobs-lct-archieves.git
 cd bobs-lct-archieves
 ```
 
-### 2. Подготовка ML-артефактов
-
-Скачайте архивы **model.zip** и **checkpoint.zip** по ссылке:
-
-```
-https://drive.google.com/drive/folders/1YRlNWaCbIptM1gM2B63z88xtDxTE2SJ1?usp=sharing
-```
-
-Разместите их в папке `mlWorker/` и распакуйте:
-
-```bash
-mkdir -p mlWorker
-cd mlWorker
-unzip -o model.zip
-unzip -o checkpoint.zip
-cd ..
-```
-
-### 3. Запуск контейнеров
+### 2. Запуск контейнеров
 
 ```bash
 docker compose up -d
@@ -96,8 +66,6 @@ docker compose restart nginx --build -d
 bobs-lct-archieves/
 ├─ docker-compose.yml
 ├─ mlWorker/
-│  ├─ model/              # распакованные данные модели
-│  ├─ checkpoint/         # контрольные точки обучения
 │  └─ ...
 ├─ src/                   # исходный код сервисов
 └─ README.md

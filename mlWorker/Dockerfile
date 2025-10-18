@@ -1,40 +1,26 @@
-FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
+FROM python:3.10-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
+# Библиотеки для Pillow/torchvision (jpeg/png/zlib/BLAS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
-    libpq-dev \
-    git \
-    git-lfs \
-    libjpeg-dev \
-    zlib1g-dev \
-    libpng-dev \
-    curl \
-    ca-certificates \
+    build-essential git curl ca-certificates \
+    libjpeg62-turbo-dev zlib1g-dev libpng-dev libopenblas-dev \
  && rm -rf /var/lib/apt/lists/*
 
+# ВАЖНО: ставим torch и torchvision ОДНОЙ командой и с cpu-индекса
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
+    torch==2.4.1 torchvision==0.19.1
+
+# Остальные зависимости из requirements.txt
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+ && pip check
+
+
 WORKDIR /app
+COPY . .
 
-COPY ../../ml_worker /app
-
-RUN python -m pip install --upgrade pip setuptools wheel && \
-    python -m pip install \
-        "transformers>=4.43.0" \
-        "accelerate>=0.33.0" \
-        "bitsandbytes>=0.43.0" \
-        "peft>=0.11.0" \
-        "torchvision" \
-        "Pillow" \
-        "tqdm" \
-        "boto3" \
-        "pika" \
-        "python-dotenv" \
-        "psycopg2-binary" \
-        "kraken>=4.3.14"
-
-RUN kraken --version || true
-
-VOLUME ["/app/models/", "/app/checkpoint-200/"]
-
-CMD ["python", "-c", "main.py"]
+CMD ["python", "main.py"]

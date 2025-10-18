@@ -59,27 +59,43 @@ services:
 
   mlworker:
     build: ./mlWorker
+    container_name: ml-worker
+
+    #    deploy:
+    #      resources:
+    #        reservations:
+    #          devices:
+    #            - driver: nvidia
+    #              device_ids: [ '2' ]
+    #              capabilities: [ gpu ]
+
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    working_dir: /app
     volumes:
       - ./mlWorker:/app
+
+    init: true
+    stdin_open: true
+    tty: true
+
     environment:
+      NVIDIA_VISIBLE_DEVICES: "2"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: db
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      YANDEX_IAM_TOKEN: YANDEX_IAM_TOKEN
-      YANDEX_OAUTH_TOKEN: YANDEX_OAUTH_TOKEN
-      YANDEX_FOLDER_ID: YANDEX_FOLDER_ID
+      MINIO_ROOT_HOST: http://minio
+      RABBITMQ_HOST: rabbitmq
+
     depends_on:
       - rabbitmq
       - postgres
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   frontend:
     build:
@@ -87,3 +103,20 @@ services:
       dockerfile: .docker/Dockerfile_production
     ports:
       - 8080:80
+
+
+#  llama:
+#    image: ghcr.io/ggml-org/llama.cpp:server
+#    container_name: llama-server
+#    command: >
+#      -m /mlWorker/models/t-lite-0.1-q4_k_m.gguf
+#      --ctx-size 2048
+#      --threads 8
+#      --port 8081
+#      --host 0.0.0.0
+#      --verbose
+#    volumes:
+#      - ./mlWorker/models:/mlWorker/models
+#    ports:
+#      - "8081:8081"
+#    restart: unless-stopped
