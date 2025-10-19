@@ -18,7 +18,7 @@ export default function BlockSelectionOverlay(props: BlockSelectionOverlayProps)
   };
 
   return (
-    <Show when={editorState.entityCreationMode === 'selectblock'}>
+    <Show when={editorState.entityCreationMode === 'selectblock' || editorState.entityCreationMode === 'editentity'}>
       <div class="block-selection-overlay">
         <div class="block-selection-overlay__header">
           <h3>Выберите блок текста для создания образа</h3>

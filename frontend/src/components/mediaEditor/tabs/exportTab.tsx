@@ -1,4 +1,4 @@
-import {onMount, Accessor, JSX, createEffect, untrack, Show, createMemo, createSignal, For, onCleanup} from 'solid-js';
+import {onMount, Accessor, JSX, createEffect, untrack, Show, createMemo, createSignal, For, Index, onCleanup} from 'solid-js';
 
 
 import ripple from '../../ripple'; ripple;
@@ -17,12 +17,48 @@ import TabContent from './tabContent';
 import { ScrollableYTsx } from '../../chat/topbarSearch';
 import EditLineTab from './editLineTab';
 import BottomButton from '../bottomButton';
+import fastSmoothScroll from '../../../helpers/fastSmoothScroll';
 
 export default function ExportTab() {
   const {editorState, actions} = useMediaEditorContext();
   
   // Tab mode state for table/edit/column switching
   const [currentMode, setCurrentMode] = createSignal<'table' | 'edit' | 'column'>('table');
+  
+  // Sync isEditingCell state to context only when this tab is active
+  createEffect(() => {
+    const isActive = editorState.currentTab === 'download';
+    if (isActive) {
+      editorState.isEditingCell = currentMode() === 'edit';
+    }
+  });
+  
+  // Track when this tab becomes active/inactive
+  createEffect(() => {
+    const isActive = editorState.currentTab === 'download';
+    
+    if (isActive) {
+      // Tab activated
+      editorState.isOverlayOpen = true;
+      
+      initializeTable();
+      
+      // Check if selected column exists in current table
+      const currentTable = editorState.targetFile?.table || [['Название колонки']];
+      const currentIndex = editorState.selectedColumnIndex;
+      
+      if (currentIndex === undefined || currentIndex === null || currentIndex >= currentTable.length) {
+        // Selected column doesn't exist - set to first column
+        setSelectedColumnIndex(0);
+      }
+    } else {
+      // Tab deactivated
+      editorState.isEditingCell = false;
+      editorState.isOverlayOpen = false;
+      actions.syncTargetFileToMediaState();
+    }
+  });
+  
   const [localCellValue, setLocalCellValue] = createSignal('');
   // Use global selectedColumnIndex from context
   const selectedColumnIndex = () => {
@@ -46,7 +82,6 @@ export default function ExportTab() {
   
   // Get current table data with memoization for reactivity (column-based)
   const getTable = createMemo(() => {
-    initializeTable();
     const table = editorState.targetFile?.table;
     return table || [['Название колонки']]; // Array of columns
   });
@@ -65,7 +100,6 @@ export default function ExportTab() {
     return table[col]?.[row] || '';
   };
   
-  // Handle cell click to edit
   const handleCellEdit = (row: number, col: number) => {
     if (editorState.targetFile) {
       editorState.targetFile.targetRow = row;
@@ -75,22 +109,68 @@ export default function ExportTab() {
     }
   };
   
-  // Handle column tab click to view column
   const handleColumnClick = (colIndex: number) => {
     setSelectedColumnIndex(colIndex);
+    
+    setTimeout(() => {
+      const activeTab = document.querySelector(`[data-tab-index="${colIndex}"]`) as HTMLElement;
+      const scrollContainer = activeTab?.closest('.scrollable') as HTMLElement;
+      if (activeTab && scrollContainer) {
+        fastSmoothScroll({
+          container: scrollContainer,
+          element: activeTab,
+          position: 'center',
+          axis: 'x'
+        });
+      }
+    }, 0);
   };
+
+  createEffect(() => {
+    const targetIndex = selectedColumnIndex();
+
+    setTimeout(() => {
+      const activeTab = document.querySelector(`[data-tab-index="${targetIndex}"]`) as HTMLElement;
+      const scrollContainer = activeTab?.closest('.scrollable') as HTMLElement;
+      if (activeTab && scrollContainer) {
+        fastSmoothScroll({
+          container: scrollContainer,
+          element: activeTab,
+          position: 'center',
+          axis: 'x'
+        });
+      }
+    }, 100);
+  });
   
-  // Save cell value (column-based)
   const handleSaveCell = () => {
     if (editorState.targetFile) {
-      const table = getTable().map(column => [...column]); // Create deep copy of columns
+      // Get fresh table directly from targetFile, not from memo
+      const currentTable = editorState.targetFile.table || [['Название колонки']];
+      const table = currentTable.map(column => [...column]); // Create deep copy of columns
       const row = editorState.targetFile.targetRow || 0;
       const col = editorState.targetFile.targetColumn || 0;
+      const cellValue = localCellValue().trim();
+      
+      console.log('handleSaveCell - before:', { 
+        row, 
+        col, 
+        cellValue, 
+        currentTableLength: currentTable.length,
+        tableLength: table.length 
+      });
+      
+      if (row === 0 && col >= table.length && !cellValue) {
+        console.log('Blocked: empty header for new column');
+        setCurrentMode('table');
+        return;
+      }
       
       // Ensure column exists
       while (table.length <= col) {
         const newColumnName = `Колонка ${table.length + 1}`;
         table.push([newColumnName]); // New column with just header
+        console.log('Created column:', newColumnName);
       }
       
       // Ensure row exists in column
@@ -98,10 +178,28 @@ export default function ExportTab() {
         table[col].push(''); // Add empty cells if needed
       }
       
-      table[col][row] = localCellValue();
+      // Don't allow empty header for existing columns (except first column)
+      if (row === 0 && col > 0 && !cellValue) {
+        // Keep the existing header if trying to save empty
+        table[col][row] = table[col][row] || `Колонка ${col + 1}`;
+        console.log('Kept existing header:', table[col][row]);
+      } else {
+        table[col][row] = cellValue;
+        console.log('Set cell value:', cellValue);
+      }
+      
+      console.log('handleSaveCell - after:', { 
+        finalTable: table,
+        finalTableLength: table.length 
+      });
       
       // Force reactivity by creating new file object
-      const updatedFile = { ...editorState.targetFile, table: table };
+      const updatedFile = { 
+        ...editorState.targetFile, 
+        table: table,
+        targetRow: row,
+        targetColumn: col
+      };
       actions.setTargetFile(updatedFile);
       
       if (row === 0) {
@@ -120,10 +218,15 @@ export default function ExportTab() {
     if (row === 0 && col === 0) return; // Cannot delete main cell
     
     if (editorState.targetFile) {
-      const table = [...getTable()]; // Create deep copy
+      // Get fresh table directly from targetFile, not from memo
+      const currentTable = editorState.targetFile.table || [['Название колонки']];
+      const table = currentTable.map(column => [...column]); // Deep copy
+      
+      console.log('handleDeleteCell:', { row, col, tableLength: table.length });
       
       // If editing header row (row 0) and column doesn't exist yet, just cancel creation
-      if (row === 0 && col >= table[0].length) {
+      if (row === 0 && col >= table.length) {
+        console.log('Cancel: new column creation');
         // This is a new column being created, just cancel
         setCurrentMode('table');
         return;
@@ -131,11 +234,14 @@ export default function ExportTab() {
       
       // For existing columns in header row, delete entire column
       if (row === 0) {
+        console.log('Deleting entire column');
         handleDeleteColumn(col);
+        setCurrentMode('table');
+        return;
       } else {
         // Otherwise, just clear the cell (column-based)
-        const table = getTable().map(column => [...column]); // Deep copy
         if (table[col] && table[col][row] !== undefined) {
+          console.log('Deleting cell at row:', row);
           // Remove the cell by splicing it out
           table[col].splice(row, 1);
           // Force reactivity by creating new file object
@@ -152,10 +258,16 @@ export default function ExportTab() {
     if (colIndex === 0) return; // Cannot delete first column
     
     if (editorState.targetFile) {
-      const table = getTable().map(column => [...column]); // Deep copy
+      // Get fresh table directly from targetFile, not from memo
+      const currentTable = editorState.targetFile.table || [['Название колонки']];
+      const table = currentTable.map(column => [...column]); // Deep copy
+      
+      console.log('handleDeleteColumn:', { colIndex, tableLength: table.length });
       
       // Remove entire column
       table.splice(colIndex, 1);
+      
+      console.log('After delete:', { newTableLength: table.length });
       
       // Force reactivity by creating new file object
       const updatedFile = { ...editorState.targetFile, table: table };
@@ -171,8 +283,11 @@ export default function ExportTab() {
   // Add new column (column-based)
   const handleAddColumn = () => {
     if (editorState.targetFile) {
-      const table = getTable();
-      const newColumnIndex = table.length;
+      // Get fresh table directly from targetFile, not from memo
+      const currentTable = editorState.targetFile.table || [['Название колонки']];
+      const newColumnIndex = currentTable.length;
+      
+      console.log('handleAddColumn:', { newColumnIndex, currentTableLength: currentTable.length });
       
       // Don't save to table yet, just open edit mode for the new column header
       editorState.targetFile.targetRow = 0;
@@ -236,32 +351,54 @@ export default function ExportTab() {
   };
 
   const TableMode = () => {
-    const table = createMemo(() => getTable());
-    console.log(table());
-    let isFirstRender = true;
+    let columnMenuRef: HTMLElement;
+    let underlineRef: HTMLDivElement;
+    
+    const updateUnderline = (index: number) => {
+      if (!columnMenuRef || !underlineRef) return;
+      
+      const activeTab = columnMenuRef.querySelector(`[data-tab-index="${index}"]`) as HTMLElement;
+      if (!activeTab) return;
+      
+      const menuBR = columnMenuRef.getBoundingClientRect();
+      const tabBR = activeTab.getBoundingClientRect();
+      
+      // Same logic as main tabs
+      const leftPosition = tabBR.left - menuBR.left;
+      const tabWidth = tabBR.width;
+      
+      underlineRef.style.setProperty('--left', leftPosition + 'px');
+      underlineRef.style.setProperty('--width', tabWidth + 'px');
+    };
+    
+    onMount(() => {
+      // Try multiple times to ensure elements are rendered
+      const tryUpdate = (attempts = 0) => {
+        if (attempts > 5) return; // Max 5 attempts
+        
+        setTimeout(() => {
+          updateUnderline(selectedColumnIndex());
+          if (attempts < 2) {
+            tryUpdate(attempts + 1);
+          }
+        }, attempts === 0 ? 0 : 100);
+      };
+      
+      tryUpdate();
+    });
     
     createEffect(() => {
-      const activeIndex = selectedColumnIndex();
-      const activeTab = document.querySelector(`[data-tab-index="${activeIndex}"]`);
-
-      if (isFirstRender) {
-        isFirstRender = false;
-        setTimeout(() => {
-          activeTab?.scrollIntoView({ block: 'nearest', inline: 'center' });
-        }, 400);
-        return;
-      }
-
-      if (activeTab) {
-        activeTab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
+      const index = selectedColumnIndex();
+      setTimeout(() => {
+        updateUnderline(index);
+      }, 0);
     });
     
     return (
-      <div class="media-editor__tab-content-scrollable-content tabs" style={"overfow: clip"}>
-        <div class="folders-tabs-scrollable menu-horizontal-scrollable" style="box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
+      <div class="media-editor__tab-content-scrollable-content tabs" style={"overfow: hidden; max-width: 400px;"}>
+        <div class="folders-tabs-scrollable menu-horizontal-scrollable" style="box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); overfow: hidden; max-width: 400px;">
           <div class="scrollable scrollable-x">
-            <nav class="menu-horizontal-div">
+            <nav ref={columnMenuRef} class="menu-horizontal-div" style="position: relative;">
               <For each={getHeaders()}>
                 {(cellValue, index) => (
                   <div
@@ -284,12 +421,8 @@ export default function ExportTab() {
                       >
                         <IconTsx icon="edit" style="font-size: 18px;" />
                       </button>
-                      <Show when={selectedColumnIndex() === index()}>
-                        <i style="transform: none;" class="animate"></i>
-                      </Show>
                     </span>
                     
-                    {/* Fake overlay element above ripple - positioned exactly like original */}
                     <span style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 1;" class="menu-horizontal-div-item-span">
                       <span style="opacity: 0.7; pointer-events: none;" class="text-super" dir="auto">
                         {cellValue || `Колонка ${index() + 1}`}
@@ -307,6 +440,10 @@ export default function ExportTab() {
                   </div>
                 )}
               </For>
+              <div 
+                ref={underlineRef} 
+                style="--left: 0px; --width: 100px; position: absolute; left: var(--left); bottom: 0; width: var(--width); height: 3px; border-top-left-radius: 3px; border-top-right-radius: 3px; background-color: var(--primary-color); transition: left 0.2s ease, width 0.2s ease; z-index: 2;"
+              />
             </nav>
           </div>
         </div>
@@ -315,7 +452,8 @@ export default function ExportTab() {
         <TabContent
           currentTab={selectedColumnIndex().toString()}
           onContainer={() => {}}
-          onScroll={() => {}}
+          onScroll={console.log}
+          scrollable={ true }
           tabs={getHeaders().reduce((acc, _, colIndex) => {
             acc[colIndex.toString()] = () => <ColumnContent columnIndex={colIndex} />;
             return acc;
@@ -341,41 +479,39 @@ export default function ExportTab() {
     });
     
     return (
-      <ScrollableYTsx>
-        <div class="media-editor__ocr-content">
-          <div class="media-editor__ocr-entities">
-            <Show
-              when={columnData().length > 0}
-              fallback={
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; min-height: 200px;">
-                  <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">📁</div>
-                  <div style="color: var(--secondary-text-color); font-size: 0.9rem; font-weight: 400; line-height: 1.4;">Нет элементов в колонке</div>
-                </div>
-              }
-            >
-              <For each={columnData()}>
-                {(item) => (
-                  <div
-                    class="media-editor__ocr-paragraph-wrapper"
-                    onClick={() => handleCellEdit(item.rowIndex, selectedColumnIndex())}
-                  >
-                    <div class="media-editor__ocr-paragraph" use:ripple>
-                      <div class="media-editor__ocr-paragraph-text">
-                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                          <span style="font-size: 12px; color: var(--secondary-text-color); font-weight: 500;">
-                            [{item.rowIndex}, {selectedColumnIndex()}]
-                          </span>
-                        </div>
-                        {item.value || 'Пустая ячейка'}
+      <div class="media-editor__ocr-content">
+        <div class="media-editor__ocr-entities">
+          <Show
+            when={columnData().length > 0}
+            fallback={
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; min-height: 200px;">
+                <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">📁</div>
+                <div style="color: var(--secondary-text-color); font-size: 0.9rem; font-weight: 400; line-height: 1.4;">Нет элементов в колонке</div>
+              </div>
+            }
+          >
+            <Index each={columnData()}>
+              {(item) => (
+                <div
+                  class="media-editor__ocr-paragraph-wrapper"
+                  onClick={() => handleCellEdit(item().rowIndex, selectedColumnIndex())}
+                >
+                  <div class="media-editor__ocr-paragraph" use:ripple>
+                    <div class="media-editor__ocr-paragraph-text">
+                      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                        <span style="font-size: 12px; color: var(--secondary-text-color); font-weight: 500;">
+                          [{item().rowIndex}, {selectedColumnIndex()}]
+                        </span>
                       </div>
+                      {item().value || 'Пустая ячейка'}
                     </div>
                   </div>
-                )}
-              </For>
-            </Show>
-          </div>
+                </div>
+              )}
+            </Index>
+          </Show>
         </div>
-      </ScrollableYTsx>
+      </div>
     );
   };
   
@@ -395,36 +531,34 @@ export default function ExportTab() {
     });
     
     return (
-      <ScrollableYTsx>
-        <div class="media-editor__ocr-content">
-          <div class="media-editor__ocr-entities">
-            <Show
-              when={columnData().length > 0}
-              fallback={
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; min-height: 200px;">
-                  <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">📁</div>
-                  <div style="color: var(--secondary-text-color); font-size: 0.9rem; font-weight: 400; line-height: 1.4;">Нет элементов в колонке</div>
-                </div>
-              }
-            >
-              <For each={columnData()}>
-                {(item) => (
-                  <div
-                    class="media-editor__ocr-paragraph-wrapper"
-                    onClick={() => handleCellEdit(item.rowIndex, props.columnIndex)}
-                  >
-                    <div class="media-editor__ocr-paragraph" use:ripple>
-                      <div class="media-editor__ocr-paragraph-text">
-                        {item.value || 'Пустая ячейка'}
-                      </div>
+      <div class="media-editor__ocr-content">
+        <div class="media-editor__ocr-entities">
+          <Show
+            when={columnData().length > 0}
+            fallback={
+              <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; text-align: center; min-height: 200px;">
+                <div style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.7;">📁</div>
+                <div style="color: var(--secondary-text-color); font-size: 0.9rem; font-weight: 400; line-height: 1.4;">Нет элементов в колонке</div>
+              </div>
+            }
+          >
+            <Index each={columnData()}>
+              {(item) => (
+                <div
+                  class="media-editor__ocr-paragraph-wrapper"
+                  onClick={() => handleCellEdit(item().rowIndex, props.columnIndex)}
+                >
+                  <div class="media-editor__ocr-paragraph" use:ripple>
+                    <div class="media-editor__ocr-paragraph-text">
+                      {item().value || 'Пустая ячейка'}
                     </div>
                   </div>
-                )}
-              </For>
-            </Show>
-          </div>
+                </div>
+              )}
+            </Index>
+          </Show>
         </div>
-      </ScrollableYTsx>
+      </div>
     );
   };
   
@@ -454,11 +588,12 @@ export default function ExportTab() {
             onClick={() => setCurrentMode('table')}
             use:ripple
             title="Назад"
+            style='margin-left: 8px'
           >
             <IconTsx icon="left" />
           </button>
-          <div style="margin-left: 8px" class="media-editor__edit-line-editor-title">
-            Редактирование ячейки [{row}, {col}]
+          <div style="margin-left: -8px" class="media-editor__edit-line-editor-title">
+            Редактирование ячейки
           </div>
         </div>
         
@@ -488,7 +623,7 @@ export default function ExportTab() {
         
         <BottomButton
           onClick={handleSaveCell}
-          style="bottom: 112px;"
+          style="bottom: 118px;"
         >
           Сохранить
         </BottomButton>
@@ -521,6 +656,7 @@ export default function ExportTab() {
         <div class="media-editor__text-mode-switcher">
           <button
             class="media-editor__text-mode-btn"
+            classList={{ disable: currentMode() === 'edit' }}
             onClick={handleAddColumn}
             use:ripple
           >
@@ -530,6 +666,7 @@ export default function ExportTab() {
           <div class="media-editor__text-mode-switcher-inner">
             <button
               class="media-editor__text-mode-btn"
+              classList={{ disable: currentMode() === 'edit' }}
               onClick={handleDownloadCSV}
               use:ripple
             >
@@ -538,6 +675,7 @@ export default function ExportTab() {
             </button>
           </div>
         </div>
+        <div style={"max-width: 400px; overflow: hidden"}>
         <Show 
           when={editorState.targetFile?.status === 'done'}
           fallback={
@@ -574,6 +712,7 @@ export default function ExportTab() {
             }}
           />
         </Show>
+        </div>
       </div>
     </Show>
   );

@@ -1,4 +1,4 @@
-import {For, Show} from 'solid-js';
+import {createSignal, For, Show} from 'solid-js';
 import {modifyMutable, produce} from 'solid-js/store';
 import {useMediaEditorContext} from './context';
 import {IconTsx} from '../iconTsx';
@@ -28,11 +28,13 @@ function getImageSrcWithFallback(filepath: string): { localSrc: string; apiSrc: 
 
 export default function FilesList() {
   const {mediaState, actions, editorState} = useMediaEditorContext();
+  const [isUploadingFolder, setIsUploadingFolder] = createSignal(false);
   let fileInput: HTMLInputElement;
+  let folderInput: HTMLInputElement;
   const handleFileSelect = async (files: FileList) => {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (!file.type.startsWith('image/')) {
+      if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
         continue;
       }
 
@@ -44,20 +46,61 @@ export default function FilesList() {
     }
   };
 
-  const handleFileInputChange = (e: Event) => {
-    const target = e.target as HTMLInputElement;
-    if (target.files && target.files.length > 0) {
-      handleFileSelect(target.files);
+
+  const handleFolderSelect = async (files: FileList) => {
+    setIsUploadingFolder(true);
+    let uploadedCount = 0;
+    let totalFiles = 0;
+    
+    // Подсчитываем общее количество файлов
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        totalFiles++;
+      }
     }
+    
+    console.log(`Найдено ${totalFiles} изображений и PDF файлов в папке`);
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      // Фильтруем только изображения и PDF
+      if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+        continue;
+      }
+      
+      try {
+        await actions.uploadFile(file);
+        uploadedCount++;
+        console.log(`Загружено ${uploadedCount}/${totalFiles}: ${file.name}`);
+      } catch (error) {
+        console.error(`Failed to upload file ${file.name}:`, error);
+      }
+    }
+    
+    setIsUploadingFolder(false);
+    console.log(`Загрузка папки завершена. Загружено ${uploadedCount} из ${totalFiles} файлов`);
   };
+
 
   const handleDrop = (e: DragEvent) => {
     e.preventDefault();
     
     if (e.dataTransfer?.files) {
-      handleFileSelect(e.dataTransfer.files);
+      // Проверяем, содержит ли drop папку (webkitdirectory)
+      const hasDirectory = Array.from(e.dataTransfer.files).some(file => 
+        file.webkitRelativePath && file.webkitRelativePath.includes('/')
+      );
+      
+      if (hasDirectory) {
+        handleFolderSelect(e.dataTransfer.files);
+      } else {
+        handleFileSelect(e.dataTransfer.files);
+      }
     }
   };
+
 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault();
@@ -77,6 +120,12 @@ export default function FilesList() {
     actions.setTargetFile(file);
   };
 
+  // Вычисляем статистику файлов
+  const totalFiles = () => mediaState.uploadedFiles.length;
+  const processedFiles = () => mediaState.uploadedFiles.filter(file => file.status === 'done').length;
+  const processingFiles = () => mediaState.uploadedFiles.filter(file => file.status === 'processing').length;
+  const errorFiles = () => mediaState.uploadedFiles.filter(file => file.status === 'error').length;
+
   return (
     <div class="files-list">
       <div class="files-list__header">
@@ -93,6 +142,31 @@ export default function FilesList() {
         }
       >
         <ScrollableYTsx class="files-list__items media-editor__tab-content-scrollable-content">
+          <Show when={mediaState.uploadedFiles.length > 0}>
+            <div class="files-list__stats">
+              <div class="files-list__stats-main">
+                <span class="files-list__stats-total">Всего файлов: {totalFiles()}</span>
+              </div>
+              <div class="files-list__stats-details">
+                <div class="files-list__stats-item files-list__stats-item--success">
+                  <div class="files-list__stats-dot files-list__stats-dot--success"></div>
+                  <span>Обработано: {processedFiles()}</span>
+                </div>
+                <Show when={processingFiles() > 0}>
+                  <div class="files-list__stats-item files-list__stats-item--processing">
+                    <div class="files-list__stats-dot files-list__stats-dot--processing"></div>
+                    <span>Обрабатывается: {processingFiles()}</span>
+                  </div>
+                </Show>
+                <Show when={errorFiles() > 0}>
+                  <div class="files-list__stats-item files-list__stats-item--error">
+                    <div class="files-list__stats-dot files-list__stats-dot--error"></div>
+                    <span>Ошибки: {errorFiles()}</span>
+                  </div>
+                </Show>
+              </div>
+            </div>
+          </Show>
           <For each={mediaState.uploadedFiles.filter(file => file.type.startsWith('image/'))}>
             {(file) => (
               <div 
@@ -169,20 +243,83 @@ export default function FilesList() {
         </ScrollableYTsx>
       </Show>
 
-      <BottomButton
-        icon="dragfiles"
-        onClick={() => fileInput.click()}
-      >
-        Загрузить файл
-      </BottomButton>
+      <div>
+        <div
+          style={{
+            height: '75px',
+            position: 'absolute',
+            left: '0',
+            right: '0',
+            bottom: '70px',
+            color: 'white',
+            padding: '12px 16px 0 12px',
+            width: '100%',
+            transition: 'all 0.2s ease',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'center',
+            "backdrop-filter": "blur(10px)",
+            "-webkit-backdrop-filter": "blur(10px)",
+          }}
+        >
+          <button
+            onClick={() => folderInput.click()}
+            disabled={isUploadingFolder()}
+            class="bottom-button"
+            style={{
+              color: 'white',
+              border: 'none',
+              cursor: isUploadingFolder() ? 'not-allowed' : 'pointer',
+              opacity: isUploadingFolder() ? 0.6 : 1,
+              transition: 'all 0.2s ease',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              'z-index': 10,
+              'width': '100%',
+              'min-width': '376px',
+            }}
+          >
+            📁 {isUploadingFolder() ? '⏳ Загрузка...' : 'Загрузить папку'}
+          </button>
+        </div>
+
+        <BottomButton
+          icon="dragfiles"
+          onClick={() => fileInput.click()}
+        >
+          Загрузить файлы
+        </BottomButton>
+      </div>
 
       <input
         ref={fileInput}
         type="file"
-        accept="image/*"
+        accept="image/*,application/pdf"
         multiple
         style="display: none"
-        onChange={handleFileInputChange}
+        onChange={(e) => {
+          const target = e.target as HTMLInputElement;
+          if (target.files && target.files.length > 0) {
+            handleFileSelect(target.files);
+          }
+        }}
+      />
+      
+      <input
+        ref={folderInput}
+        type="file"
+        {...({webkitdirectory: ""} as any)}
+        {...({directory: ""} as any)}
+        multiple
+        accept="image/*,application/pdf"
+        style="display: none"
+        onChange={(e) => {
+          const target = e.target as HTMLInputElement;
+          if (target.files && target.files.length > 0) {
+            handleFolderSelect(target.files);
+          }
+        }}
       />
     </div>
   );

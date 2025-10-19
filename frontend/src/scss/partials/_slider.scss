@@ -65,21 +65,13 @@ $menu-size: 3rem;
     line-height: var(--line-height);
     border-radius: 0;
 
-    @include hover-background-effect();
-
     &.active {
       color: var(--primary-color);
 
       i {
         opacity: 1;
       }
-
-      .c-ripple__circle {
-        background-color: var(--light-primary-color);
-      }
   
-      @include hover-background-effect(primary);
-
       .badge {
         background-color: var(--primary-color);
       }

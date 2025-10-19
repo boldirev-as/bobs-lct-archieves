@@ -8,6 +8,7 @@ import type {ObjectPath} from '../../types';
 import type {MediaEditorProps} from './mediaEditor';
 import {MediaType, NumberPair, ResizableLayer, StickerRenderingInfo, TextLayerInfo, UploadedFile, GalleryItem} from './types';
 import {approximateDeepEqual, snapToAvailableQuality, traverseObjectDeep} from './utils';
+import {extractImagesFromPDF} from './pdfImageExtractor';
 
 
 type EditingMediaStateWithoutHistory = {
@@ -21,6 +22,9 @@ type EditingMediaStateWithoutHistory = {
   videoQuality: number;
   
   uploadedFiles: UploadedFile[];
+  
+  // Thumbnails storage: fileId -> { paragraphId: thumbnail }
+  paragraphThumbnails: Record<string, Record<string, string>>;
 };
 
 export type EditingMediaState = EditingMediaStateWithoutHistory & {
@@ -90,6 +94,35 @@ export type MediaEditorState = {
   
   // Selected column index for export table
   selectedColumnIndex?: number;
+  
+  // Cell editing state for disabling UI during edit
+  isEditingCell?: boolean;
+  
+  // Paragraph editing state
+  isEditingParagraph?: boolean;
+  editingBlockIndex?: number;
+  originalLayerState?: any; // Backup of layer state before editing
+  
+  // Entity editing state
+  editingEntityId?: string; // ID of entity being edited
+  originalEntityState?: any; // Backup of entity state before editing
+  
+  // Hover preview state
+  hoverPreview?: {
+    visible: boolean;
+    x: number;
+    y: number;
+    content?: {
+      type: 'paragraph' | 'image';
+      text?: string;
+      imageSrc?: string;
+      boundingBox?: any;
+      blockIndex?: number;
+    };
+  };
+  
+  // Overlay open state for export tab
+  isOverlayOpen?: boolean;
 };
 
 export enum SetVideoTimeFlags {
@@ -113,12 +146,26 @@ export type EditorOverridableGlobalActions = {
   setCurrentGalleryItem: (index: number) => void;
   toggleGallery: () => void;
   setTargetFile: (file: UploadedFile | undefined) => void;
+  syncTargetFileToMediaState: () => void;
   createEntity: (blockIndex: number, text: string, startIndex: number, endIndex: number, type: import('./types').EntityType) => string;
   deleteEntity: (entityId: string) => void;
   setSelectedBlock: (block: {blockIndex: number} | undefined) => void;
   setEntityCreationMode: (mode: 'list' | 'selectblock' | 'editentity' | undefined) => void;
   addCellToColumn: (columnIndex: number, cellValue: string) => void;
   setSelectedColumnIndex: (columnIndex: number) => void;
+  deleteParagraph: (id: number | string) => void;
+  setHoverPreview: (preview: {
+    visible: boolean;
+    x: number;
+    y: number;
+    content?: {
+      type: 'paragraph' | 'image';
+      text?: string;
+      imageSrc?: string;
+      boundingBox?: any;
+      blockIndex?: number;
+    };
+  }) => void;
 };
 
 
@@ -132,6 +179,7 @@ const getDefaultEditingMediaState = (props: MediaEditorProps): EditingMediaState
   videoMuted: false,
   videoQuality: snapToAvailableQuality(props.mediaSize[1]),
   uploadedFiles: [],
+  paragraphThumbnails: {},
 
   history: [],
   redoHistory: []
@@ -220,6 +268,28 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
     resetRotationWheel: () => {},
     setVideoTime: () => {},
     uploadFile: async (file: File) => {
+      if (file.type === 'application/pdf') {
+        try {
+          console.log('Extracting images from PDF...');
+          const extractedImages = await extractImagesFromPDF(file);
+          
+          // Добавляем каждое извлеченное изображение как отдельный файл
+          for (const image of extractedImages) {
+            const imageFile = new File([image.blob], image.name, { type: 'image/png' });
+            
+            // Используем ту же функцию uploadFile для загрузки извлеченного изображения
+            await actions.uploadFile(imageFile);
+          }
+          
+          console.log(`Extracted and uploaded ${extractedImages.length} images from PDF`);
+        } catch (error) {
+          console.error('Error extracting images from PDF:', error);
+          // Не прерываем загрузку основного PDF файла
+        }
+
+        return;
+      }
+      
       const tempId = `temp_${Date.now()}`; // Use a temporary ID with prefix
       const uploadedFile: UploadedFile = {
         id: tempId,
@@ -231,17 +301,17 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
         filepath: URL.createObjectURL(file) // Local preview
       };
       
-        // Add file to the list with loading status
-        modifyMutable(mediaState, produce(state => {
-          state.uploadedFiles.push(uploadedFile);
+      // Add file to the list with loading status
+      modifyMutable(mediaState, produce(state => {
+        state.uploadedFiles.push(uploadedFile);
+      }));
+      
+      // If this is the first file and no targetFile is set, select it
+      if (mediaState.uploadedFiles.length === 1 && !editorState.targetFile) {
+        modifyMutable(editorState, produce(state => {
+          state.targetFile = uploadedFile;
         }));
-        
-        // If this is the first file and no targetFile is set, select it
-        if (mediaState.uploadedFiles.length === 1 && !editorState.targetFile) {
-          modifyMutable(editorState, produce(state => {
-            state.targetFile = uploadedFile;
-          }));
-        }
+      }
       
       try {
         // Upload to server
@@ -306,6 +376,49 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
         }
       }));
     },
+    deleteParagraph: (blockIndex: number) => {
+      if (!editorState.targetFile?.textLayers) return;
+      
+      modifyMutable(editorState, produce(state => {
+        if (state.targetFile?.textLayers) {
+          // Find and remove the layer with matching ocrBlockIndex
+          const layerIndex = state.targetFile.textLayers.findIndex(layer => 
+            layer.ocrBlockIndex === blockIndex
+          );
+          
+          if (layerIndex !== -1) {
+            // Remove the layer
+            state.targetFile.textLayers.splice(layerIndex, 1);
+            
+            // Update ocrBlockIndex for remaining layers
+            state.targetFile.textLayers.forEach(layer => {
+              if (layer.ocrBlockIndex > blockIndex) {
+                layer.ocrBlockIndex = layer.ocrBlockIndex - 1;
+              }
+            });
+            
+            if (state.targetFile.result?.result?.textAnnotation?.blocks) {
+              const blocks = state.targetFile.result.result.textAnnotation.blocks;
+              if (blockIndex >= 0 && blockIndex < blocks.length) {
+                blocks.splice(blockIndex, 1);
+                
+                const fullText = state.targetFile.textLayers
+                  .filter(layer => layer.type === 'text' && layer.textInfo)
+                  .map(layer => {
+                    return layer.textRenderingInfo?.lines?.map(line => line.content).join('\n') || 
+                           (layer.textInfo ? 'Текст слоя' : '');
+                  })
+                  .join('\n\n');
+                
+                if (state.targetFile.result.result.textAnnotation) {
+                  state.targetFile.result.result.textAnnotation.fullText = fullText;
+                }
+              }
+            }
+          }
+        }
+      }));
+    },
     addToGallery: (item: GalleryItem) => {
       modifyMutable(editorState, produce(state => {
         state.galleryItems.push(item);
@@ -336,9 +449,27 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
       }));
     },
     setTargetFile: (file: UploadedFile | undefined) => {
+      // Only update editorState.targetFile
+      // Sync to mediaState will happen on export tab unmount
       modifyMutable(editorState, produce(state => {
         state.targetFile = file;
       }));
+    },
+    syncTargetFileToMediaState: () => {
+      // Sync current targetFile back to mediaState.uploadedFiles
+      if (editorState.targetFile) {
+        const fileId = editorState.targetFile.id;
+        modifyMutable(mediaState, produce(state => {
+          const index = state.uploadedFiles.findIndex(f => f.id === fileId);
+          if (index !== -1) {
+            state.uploadedFiles[index] = editorState.targetFile!;
+            console.log('syncTargetFileToMediaState:', { 
+              fileId, 
+              tableLength: editorState.targetFile!.table?.length 
+            });
+          }
+        }));
+      }
     },
     createEntity: (blockIndex: number, text: string, startIndex: number, endIndex: number, type: import('./types').EntityType) => {
       const newEntity = {
@@ -387,56 +518,67 @@ export function createContextValue(props: MediaEditorProps): MediaEditorContextV
     },
     addCellToColumn: (columnIndex: number, cellValue: string) => {
       console.log('addCellToColumn called:', { columnIndex, cellValue });
+      
+      if (editorState.isEditingCell) {
+        return;
+      }
+      
       if (editorState.targetFile) {
-        const targetFileId = editorState.targetFile.id;
+        // Work with the current targetFile directly
+        const currentTable = editorState.targetFile.table || [['Название колонки']];
+        const newTable = currentTable.map(column => [...column]); // Deep copy each column
         
-        modifyMutable(mediaState, produce(state => {
-          const targetFile = state.uploadedFiles.find(f => f.id === targetFileId);
-          if (targetFile) {
-            // Initialize table if it doesn't exist (column-based structure)
-            if (!targetFile.table) {
-              targetFile.table = [['Название колонки']]; // First column with header
-              console.log('Initialized new table');
-            }
-            
-            // Create a new table array to ensure reactivity
-            const currentTable = targetFile.table;
-            const newTable = currentTable.map(column => [...column]); // Deep copy each column
-            
-            console.log('Current table before:', currentTable);
-            console.log('Adding to column:', columnIndex, 'value:', cellValue);
-            
-            // Ensure column exists
-            while (newTable.length <= columnIndex) {
-              const newColumnName = `Колонка ${newTable.length + 1}`;
-              newTable.push([newColumnName]); // New column with just header
-              console.log('Created new column:', newColumnName);
-            }
-            
-            // Add cell value to the specified column (push to end)
-            newTable[columnIndex].push(cellValue);
-            console.log('Column after push:', newTable[columnIndex]);
-            
-            // Replace the entire table to trigger reactivity
-            targetFile.table = newTable;
-            console.log('New table:', newTable);
-          }
-        }));
+        console.log('addCellToColumn - before:', { 
+          columnIndex, 
+          cellValue, 
+          currentTableLength: currentTable.length 
+        });
         
-        // Force update of editorState.targetFile to trigger reactivity
-        modifyMutable(editorState, produce(state => {
-          if (state.targetFile && state.targetFile.id === targetFileId) {
-            const updatedFile = mediaState.uploadedFiles.find(f => f.id === targetFileId);
-            if (updatedFile) {
-              state.targetFile = { ...updatedFile };
-            }
-          }
-        }));
+        // Ensure column exists
+        while (newTable.length <= columnIndex) {
+          const newColumnName = `Колонка ${newTable.length + 1}`;
+          newTable.push([newColumnName]); // New column with just header
+          console.log('Created new column:', newColumnName);
+        }
+        
+        // Add cell value to the specified column (push to end)
+        newTable[columnIndex].push(cellValue);
+        console.log('addCellToColumn - after:', { 
+          newTableLength: newTable.length,
+          columnLength: newTable[columnIndex].length 
+        });
+        
+        // Update through setTargetFile which syncs both states
+        const updatedFile = {
+          ...editorState.targetFile,
+          table: newTable
+        };
+        
+        actions.setTargetFile(updatedFile);
       }
     },
     setSelectedColumnIndex: (columnIndex: number) => {
       modifyMutable(editorState, produce(state => {
         state.selectedColumnIndex = columnIndex;
+      }));
+    },
+    
+    setHoverPreview: (preview: {
+      visible: boolean;
+      x: number;
+      y: number;
+      content?: {
+        type: 'paragraph' | 'image';
+        text?: string;
+        imageSrc?: string;
+        boundingBox?: any;
+        blockIndex?: number;
+      };
+    }) => {
+      console.log('setHoverPreview called with:', preview);
+      modifyMutable(editorState, produce(state => {
+        state.hoverPreview = preview;
+        console.log('Updated hoverPreview state:', state.hoverPreview);
       }));
     }
   };

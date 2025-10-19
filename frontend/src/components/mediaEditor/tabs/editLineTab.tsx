@@ -4,6 +4,7 @@ import {IconTsx} from '../../iconTsx';
 import ripple from '../../ripple'; ripple;
 import {ScrollableYTsx} from '../../chat/topbarSearch';
 import BottomButton from '../bottomButton';
+import {useParagraphThumbnails} from '../useParagraphThumbnails';
 
 interface EditLineTabProps {
   selectedLine?: {blockIndex: number} | null;
@@ -11,10 +12,14 @@ interface EditLineTabProps {
 }
 
 export default function EditLineTab(props: EditLineTabProps) {
-  const {editorState} = useMediaEditorContext();
+  const {editorState, actions} = useMediaEditorContext();
   const [editedText, setEditedText] = createSignal('');
   const [originalText, setOriginalText] = createSignal('');
   const [boundingBox, setBoundingBox] = createSignal<any>(null);
+  const [thumbnail, setThumbnail] = createSignal<string | null>(null);
+  
+  // Paragraph thumbnails hook
+  const paragraphThumbnails = useParagraphThumbnails();
 
   createEffect(() => {
     const selection = props.selectedLine;
@@ -35,16 +40,28 @@ export default function EditLineTab(props: EditLineTabProps) {
     }
   });
 
-  // Вычисляем координаты из boundingBox
+  // Load thumbnail when block changes
+  createEffect(async () => {
+    const selection = props.selectedLine;
+    if (selection && editorState.targetFile) {
+      const thumb = await paragraphThumbnails.getThumbnail(selection.blockIndex);
+      setThumbnail(thumb);
+    }
+  });
+
+  // Вычисляем координаты из boundingBox (всегда используем оригинальные vertices)
   const coordinates = createMemo(() => {
     const box = boundingBox();
     if (!box || !box.vertices || box.vertices.length < 4) {
       return null;
     }
 
+    // ВСЕГДА используем оригинальные vertices для отображения координат
+    // renderingVertices масштабируются при изменении размера экрана, но нам нужны оригинальные координаты
     const vertices = box.vertices;
     const xCoords = vertices.map((v: any) => parseInt(v.x) || 0);
     const yCoords = vertices.map((v: any) => parseInt(v.y) || 0);
+
 
     return {
       left: Math.min(...xCoords),
@@ -102,12 +119,75 @@ export default function EditLineTab(props: EditLineTabProps) {
       block.lines.length = newLines.length;
     }
     
+    // Clear original layer state - changes are saved
+    editorState.originalLayerState = undefined;
+    
     if (props.onBack) {
       props.onBack();
     }
   };
 
   const handleCancel = () => {
+    // Check if this is a new unsaved paragraph
+    if (editorState.originalLayerState?.isNew && editorState.targetFile) {
+      const blockIndex = editorState.originalLayerState.blockIndex;
+      
+      // Remove from OCR blocks
+      if (editorState.targetFile.result?.result?.textAnnotation?.blocks) {
+        editorState.targetFile.result.result.textAnnotation.blocks.splice(blockIndex, 1);
+        
+        // Update block indices for remaining blocks
+        editorState.targetFile.result.result.textAnnotation.blocks.forEach((block: any, idx: number) => {
+          // Update any references if needed
+        });
+      }
+      
+      // Remove from text layers
+      if (editorState.targetFile.textLayers) {
+        const layerIndex = editorState.targetFile.textLayers.findIndex(
+          l => l.ocrBlockIndex === blockIndex
+        );
+        
+        if (layerIndex !== -1) {
+          editorState.targetFile.textLayers.splice(layerIndex, 1);
+        }
+        
+        // Update ocrBlockIndex for layers after the removed one
+        editorState.targetFile.textLayers.forEach(layer => {
+          if (layer.ocrBlockIndex !== undefined && layer.ocrBlockIndex > blockIndex) {
+            layer.ocrBlockIndex--;
+          }
+        });
+      }
+    } else {
+      // Restore layer state from backup for existing paragraphs
+      if (editorState.originalLayerState && editorState.targetFile?.textLayers) {
+        const layerIndex = editorState.targetFile.textLayers.findIndex(
+          l => l.ocrBlockIndex === editorState.editingBlockIndex
+        );
+        
+        if (layerIndex !== -1) {
+          // Restore all layer properties from backup
+          Object.assign(editorState.targetFile.textLayers[layerIndex], editorState.originalLayerState);
+        }
+      }
+    }
+    
+    // Clear original layer state
+    editorState.originalLayerState = undefined;
+    
+    if (props.onBack) {
+      props.onBack();
+    }
+  };
+
+  const handleDelete = () => {
+    const selection = props.selectedLine;
+    if (!selection) return;
+
+    actions.deleteParagraph(selection.blockIndex);
+    editorState.originalLayerState = undefined;
+    
     if (props.onBack) {
       props.onBack();
     }
@@ -138,11 +218,11 @@ export default function EditLineTab(props: EditLineTabProps) {
                     <IconTsx icon="left" />
                   </button>
                   <div class="media-editor__edit-line-editor-title">
-                    Редактировать параграф
+                    Редактировать абзац
                   </div>
                 </div>
 
-                <div class="media-editor__edit-line-editor-body">
+                <div class="media-editor__edit-line-editor-body" style="margin-top: -16px">
                   <textarea
                     class="media-editor__edit-line-editor-textarea"
                     value={editedText()}
@@ -170,8 +250,31 @@ export default function EditLineTab(props: EditLineTabProps) {
                           <span class="value">{coordinates()!.height}px</span>
                         </div>
                       </div>
+                      
+                      <Show when={thumbnail()}>
+                        <div class="media-editor__edit-line-thumbnail">
+                          <div class="media-editor__edit-line-thumbnail-title">
+                            Миниатюра абзаца:
+                          </div>
+                          <img 
+                            src={thumbnail()!} 
+                            alt="Миниатюра абзаца"
+                            class="media-editor__edit-line-thumbnail-image"
+                          />
+                        </div>
+                      </Show>
                     </div>
                   </Show>
+                  
+                  <div class="media-editor__edit-line-editor-actions">
+                    <button
+                      class="media-editor__edit-line-editor-btn media-editor__edit-line-editor-btn--delete"
+                      onClick={handleDelete}
+                      use:ripple
+                    >
+                      Удалить
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

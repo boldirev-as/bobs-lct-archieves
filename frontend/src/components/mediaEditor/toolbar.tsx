@@ -14,6 +14,7 @@ import ExportTab from './tabs/exportTab';
 import Tabs from './tabs/tabs';
 import Topbar from './topbar';
 import FilesList from './filesList';
+import HoverPreview from './hoverPreview';
 
 import './filesList.scss';
 import './globalTabsHeader.scss';
@@ -289,13 +290,13 @@ export default function Toolbar(props: {onClose: () => void}) {
 
   const totalMove = () => extraMove() + move();
 
-  const style = createMemo((): JSX.CSSProperties => {
+  const style = createMemo(() => {
     if(isMobile()) return {
-      'opacity': editorState.isAdjusting ? 0 : 1,
-      'transform': shouldHide() ?
-        'translate(-50%, 100%)' :
-        `translate(-50%, ${totalMove()}px)`
+      style: shouldHide() ?
+        'transform: translate(-50%, 100%)' :
+        `transform: translate(-50%, ${totalMove()}px)`
     };
+    return {};
   });
 
   const onClose = () => {
@@ -340,6 +341,12 @@ export default function Toolbar(props: {onClose: () => void}) {
               </div>
             )
           }}
+        />
+        <HoverPreview 
+          visible={editorState.hoverPreview?.visible || false}
+          x={editorState.hoverPreview?.x || 0}
+          y={editorState.hoverPreview?.y || 0}
+          content={editorState.hoverPreview?.content}
         />
     </div>
   );

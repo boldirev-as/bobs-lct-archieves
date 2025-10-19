@@ -6,6 +6,7 @@ import {getCurrentFile} from '../utils';
 import {observeResize} from '../../resizeObserver';
 import {useFileByIndex, useFileById, useIsFileActive} from '../hooks/useFileByIndex';
 import {batch} from 'solid-js';
+import { useParagraphThumbnails } from '../useParagraphThumbnails';
 
 import CropHandles from './cropHandles';
 import ImageCanvas from './imageCanvas';
@@ -26,6 +27,87 @@ export default function MainCanvas(props: MainCanvasProps) {
   const [imageElement, setImageElement] = createSignal<HTMLImageElement | null>(null);
   const [overlayStyle, setOverlayStyle] = createSignal('position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;');
   const [handlesStyle, setHandlesStyle] = createSignal('position: absolute; top: 0; left: 0; width: 100%; height: 100%;');
+  const paragraphThumbnails = useParagraphThumbnails();
+  const [editingRect, setEditingRect] = createSignal<{x: number, y: number, width: number, height: number} | null>(null);
+  
+  createEffect(() => {
+    const img = imageElement();
+    console.log('MainCanvas effect - imageElement:', !!img, 'container:', !!container);
+    if (img && container) {
+      const rect = container.getBoundingClientRect();
+      console.log('Setting image element with size:', [rect.width, rect.height]);
+      paragraphThumbnails.setImageElement(img, [rect.width, rect.height]);
+    }
+  });
+
+  createEffect(() => {
+    if (!editorState.isEditingParagraph) {
+      setEditingRect(null);
+      return;
+    }
+    
+    let frameId: number;
+    
+    const update = () => {
+      const file = currentFile();
+      const layer = file?.textLayers?.find(l => l.ocrBlockIndex === editorState.editingBlockIndex);
+      
+      if (!layer || !file) {
+        setEditingRect(null);
+        return;
+      }
+      
+      // Try to get actual position from DOM element
+      const layerElement = container?.querySelector(`.media-editor__resizable-container[data-layer-id="${layer.id}"]`) as HTMLElement;
+      
+      if (layerElement) {
+        // Use actual DOM position (includes temporary drag offset) but size from layer data
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = layerElement.getBoundingClientRect();
+        
+        setEditingRect({
+          x: elementRect.left - containerRect.left,
+          y: elementRect.top - containerRect.top,
+          width: layer.width * layer.scale,
+          height: layer.height * layer.scale
+        });
+      } else {
+        // Fallback to calculated position
+        const canvasSize = file.canvasSize || [800, 600];
+        const imageDims = file.imageDimensions || [800, 600];
+        const imageAspectRatio = imageDims[0] / imageDims[1];
+        const canvasAspectRatio = canvasSize[0] / canvasSize[1];
+        
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        if (imageAspectRatio > canvasAspectRatio) {
+          const displayedHeight = canvasSize[0] / imageAspectRatio;
+          offsetY = (canvasSize[1] - displayedHeight) / 2;
+        } else {
+          const displayedWidth = canvasSize[1] * imageAspectRatio;
+          offsetX = (canvasSize[0] - displayedWidth) / 2;
+        }
+        
+        setEditingRect({
+          x: layer.position[0] + offsetX,
+          y: layer.position[1] + offsetY,
+          width: layer.width * layer.scale,
+          height: layer.height * layer.scale
+        });
+      }
+      
+      if (editorState.isEditingParagraph) {
+        frameId = requestAnimationFrame(update);
+      }
+    };
+    
+    update();
+    
+    onCleanup(() => {
+      if (frameId) cancelAnimationFrame(frameId);
+    });
+  });
 
   // Get the file for this canvas using hooks
   // Priority: 1. By index (from swiper), 2. By ID, 3. Current file from context
@@ -74,6 +156,7 @@ export default function MainCanvas(props: MainCanvasProps) {
           return;
         }
 
+        // Use original vertices for rendering on canvas (boundingBox.vertices)
         const vertices = block.boundingBox.vertices;
         const x1 = parseInt(vertices[0].x) || 0;
         const y1 = parseInt(vertices[0].y) || 0;
@@ -322,8 +405,45 @@ export default function MainCanvas(props: MainCanvasProps) {
         <div class="image-container" style="position: relative; width: 100%; height: 100%;">
           <ImageCanvas 
             fileId={props.fileId} 
-            onImageElementReady={setImageElement}
+            onImageElementReady={(img, size) => {
+              console.log('MainCanvas: Received image element from ImageCanvas:', !!img, 'size:', size);
+              setImageElement(img);
+              // Also set the size for thumbnails
+              if (img && container) {
+                const rect = container.getBoundingClientRect();
+                paragraphThumbnails.setImageElement(img, [rect.width, rect.height]);
+              }
+            }}
           />
+          
+          {/* Dimming overlay with cutout for editing element */}
+          <Show when={editingRect()}>
+            {(rect) => (
+              <svg 
+                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <mask id="editing-mask">
+                    <rect width="100%" height="100%" fill="white" />
+                    <rect 
+                      x={rect().x} 
+                      y={rect().y} 
+                      width={rect().width} 
+                      height={rect().height} 
+                      fill="black" 
+                    />
+                  </mask>
+                </defs>
+                <rect 
+                  width="100%" 
+                  height="100%" 
+                  fill="rgba(0, 0, 0, 0.5)" 
+                  mask="url(#editing-mask)" 
+                />
+              </svg>
+            )}
+          </Show>
           
           <Show when={props.isInView}>
             <div 

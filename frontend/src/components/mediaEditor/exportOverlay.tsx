@@ -14,8 +14,8 @@ interface ExportOverlayProps {
 export default function ExportOverlay(props: ExportOverlayProps) {
   const {editorState, mediaState, actions} = useMediaEditorContext();
   
-  // Show overlay only when export tab is active
-  const shouldShow = () => editorState.currentTab === 'download';
+  // Show overlay only when explicitly opened and not editing cell
+  const shouldShow = () => editorState.isOverlayOpen;
   
   // Get current file data
   const currentFile = () => mediaState.uploadedFiles.find(file => file.id === props.fileId);
@@ -98,6 +98,7 @@ export default function ExportOverlay(props: ExportOverlayProps) {
                     return (
                       <div
                         class="media-editor__radio-item block-selection-item export-overlay__item export-overlay__entity-item"
+                        classList={{ disable: editorState.isEditingCell }}
                         use:ripple
                         onClick={() => handleEntityClick(index())}
                       >
@@ -135,6 +136,7 @@ export default function ExportOverlay(props: ExportOverlayProps) {
                   {(block, index) => (
                     <div
                       class="media-editor__radio-item block-selection-item export-overlay__item"
+                      classList={{ disable: editorState.isEditingCell }}
                       use:ripple
                       onClick={() => handleBlockClick(index())}
                     >

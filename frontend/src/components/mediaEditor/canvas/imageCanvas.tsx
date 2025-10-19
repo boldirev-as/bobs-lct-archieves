@@ -25,7 +25,7 @@ function getImageSrcWithFallback(filepath: string): { localSrc: string; apiSrc: 
 interface ImageCanvasProps {
   fileId?: string;
   fileIndex?: number;
-  onImageElementReady?: (img: HTMLImageElement | null) => void;
+  onImageElementReady?: (img: HTMLImageElement | null, size?: [number, number]) => void;
 }
 
 export default function ImageCanvas(props: ImageCanvasProps) {
@@ -209,7 +209,8 @@ export default function ImageCanvas(props: ImageCanvasProps) {
     
     // Notify parent about image element
     if (props.onImageElementReady) {
-      props.onImageElementReady(img);
+      console.log('ImageCanvas: Notifying parent about image element:', !!img, 'containerSize:', containerSize());
+      props.onImageElementReady(img, containerSize());
     }
   };
   

@@ -43,7 +43,10 @@ export default function ResizableLayers(props: ResizableLayersProps) {
   const context = useMediaEditorContext();
   const {editorState, mediaState, actions} = context;
   const isTextTab = () => editorState.currentTab === 'text';
-  const canClick = () => ['stickers', 'text', 'adjustments'].includes(editorState.currentTab);
+  const canClick = () => {
+    const tabs = ['stickers', 'text', 'adjustments'];
+    return tabs.indexOf(editorState.currentTab) !== -1;
+  };
   
   // Check if this is the active file
   const isActiveFile = createMemo(() => {
@@ -60,7 +63,15 @@ export default function ResizableLayers(props: ResizableLayersProps) {
       if (!targetFile.textLayers) {
         targetFile.textLayers = [];
       }
-      return targetFile.textLayers;
+      
+      const allLayers = targetFile.textLayers;
+      
+      // Filter layers when editing a paragraph - show only the edited block
+      if (editorState.isEditingParagraph && editorState.editingBlockIndex !== undefined) {
+        return allLayers.filter(layer => layer.ocrBlockIndex === editorState.editingBlockIndex);
+      }
+      
+      return allLayers;
     }
     
     // Return empty array if no file
@@ -182,22 +193,13 @@ export default function ResizableLayers(props: ResizableLayersProps) {
   return (
     <div
       class="media-editor__resizable-layers"
-      style={{
-        cursor: 'default',
-        'pointer-events': isActiveFile() ? 'auto' : 'none',
-        'width': '100%',
-        'height': '100%'
-      }}
+      style={`cursor: default; pointer-events: ${isActiveFile() ? 'auto' : 'none'}; width: 100%; height: 100%;`}
     >
       <div
         ref={container}
         class="media-editor__resizable-layers-inner"
         onClick={addLayer}
-        style={{
-          'pointer-events': isActiveFile() ? 'auto' : 'none',
-          'width': '100%',
-          'height': '100%'
-        }}
+        style={`pointer-events: ${isActiveFile() ? 'auto' : 'none'}; width: 100%; height: 100%;`}
       >
         <For each={getCurrentFileLayers()}>
           {(layer) => (
@@ -232,7 +234,7 @@ interface ResizableContainerProps extends ResizableLayerProps {
 }
 
 export function ResizableContainer(props: ParentProps<ResizableContainerProps>) {
-  const {editorState, mediaState} = useMediaEditorContext();
+  const {editorState, mediaState, actions} = useMediaEditorContext();
   const isMobile = useIsMobile();
   
   // Простые функции для работы с координатами изображения
@@ -297,15 +299,80 @@ export function ResizableContainer(props: ParentProps<ResizableContainerProps>) 
     });
   });
 
+  // Check if this layer is being edited
+  const isBeingEdited = () => {
+    return editorState.isEditingParagraph && 
+           props.layer.ocrBlockIndex === editorState.editingBlockIndex;
+  };
+
+  // Handle mouse enter for hover preview
+  const handleMouseEnter = (e: MouseEvent) => {
+    console.log('Mouse enter on layer:', {
+      layerId: props.layer.id,
+      ocrBlockIndex: props.layer.ocrBlockIndex,
+      type: props.layer.type
+    });
+    
+    if (!props.layer.ocrBlockIndex && props.layer.type !== 'text') {
+      console.log('No OCR block index, skipping preview');
+      return;
+    }
+    
+    const file = getCurrentFile(editorState, mediaState);
+    if (!file?.result?.result?.textAnnotation?.blocks) {
+      console.log('No OCR blocks found');
+      return;
+    }
+
+    const blockIndex = props.layer.ocrBlockIndex;
+    if (blockIndex === undefined) {
+      console.log('Block index is undefined');
+      return;
+    }
+
+    const block = file.result.result.textAnnotation.blocks[blockIndex];
+    if (!block) {
+      console.log('Block not found at index:', blockIndex);
+      return;
+    }
+
+    // Get text content
+    const text = block.lines?.map((line: any) => {
+      return line.words?.map((word: any) => word.text || '').join(' ') || '';
+    }).join('\n') || '';
+
+    console.log('Setting hover preview:', {
+      text: text,
+      boundingBox: block.boundingBox
+    });
+
+    actions.setHoverPreview({
+      visible: true,
+      x: e.clientX,
+      y: e.clientY,
+      content: {
+        type: 'paragraph',
+        text: text,
+        boundingBox: block.boundingBox,
+        blockIndex: blockIndex
+      }
+    });
+  };
+
+  // Handle mouse leave for hover preview
+  const handleMouseLeave = () => {
+    actions.setHoverPreview({
+      visible: false,
+      x: 0,
+      y: 0
+    });
+  };
+
   return (
     <div
       class="media-editor__resizable-container"
-      style={{
-        'left': processedLayer().position[0] + store.diff[0] + 'px',
-        'top': processedLayer().position[1] + store.diff[1] + 'px',
-        'width': props.layer.width ? props.layer.width * processedLayer().scale + 'px' : 'auto',
-        'height': props.layer.height ? props.layer.height * processedLayer().scale + 'px' : 'auto',
-      }}
+      data-layer-id={props.layer.id}
+      style={`left: ${processedLayer().position[0] + store.diff[0]}px; top: ${processedLayer().position[1] + store.diff[1]}px; width: ${props.layer.width ? props.layer.width * processedLayer().scale + 'px' : 'auto'}; height: ${props.layer.height ? props.layer.height * processedLayer().scale + 'px' : 'auto'}; z-index: ${isBeingEdited() ? '10' : 'auto'};`}
       onClick={() => {
         // Set selected layer in the file-specific state
         const file = getCurrentFile(editorState, mediaState);
@@ -313,6 +380,8 @@ export function ResizableContainer(props: ParentProps<ResizableContainerProps>) 
           file.selectedResizableLayer = props.layer.id;
         }
       }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       ref={container}
     >
       {props.children}
@@ -320,48 +389,43 @@ export function ResizableContainer(props: ParentProps<ResizableContainerProps>) 
       <Portal mount={props.resizeHandlesContainer}>
         <div
           class="media-editor__resizable-container-handles"
-          style={{
-            'left': processedLayer().position[0] + store.diff[0] + 'px',
-            'top': processedLayer().position[1] + store.diff[1] + 'px',
-            'width': props.layer.width * processedLayer().scale + 'px',
-            'height': props.layer.height * processedLayer().scale + 'px',
-          }}
+          style={`left: ${processedLayer().position[0] + store.diff[0]}px; top: ${processedLayer().position[1] + store.diff[1]}px; width: ${props.layer.width * processedLayer().scale}px; height: ${props.layer.height * processedLayer().scale}px; z-index: ${isBeingEdited() ? '10' : 'auto'};`}
         >
           <div
             class="media-editor__resizable-container-border media-editor__resizable-container-border--vertical"
-            style={{left: 0}}
+            style={`left: 0;`}
           />
           <div
             class="media-editor__resizable-container-border media-editor__resizable-container-border--vertical"
-            style={{right: 0}}
+            style={`right: 0;`}
           />
           <div
             class="media-editor__resizable-container-border media-editor__resizable-container-border--horizontal"
-            style={{top: 0}}
+            style={`top: 0;`}
           />
           <div
             class="media-editor__resizable-container-border media-editor__resizable-container-border--horizontal"
-            style={{bottom: 0}}
+            style={`bottom: 0;`}
           />
           <div
             ref={(el) => store.leftTopEl = el}
             class="media-editor__resizable-container-circle"
-            style={{left: circleOffset(), top: circleOffset()}}
+            style={`left: ${circleOffset()}; top: ${circleOffset()};`}
           />
           <div
             ref={(el) => store.rightTopEl = el}
             class="media-editor__resizable-container-circle"
-            style={{right: circleOffset(), top: circleOffset()}}
+            style={`right: ${circleOffset()}; top: ${circleOffset()};`}
           />
           <div
             ref={(el) => store.leftBottomEl = el}
             class="media-editor__resizable-container-circle"
-            style={{left: circleOffset(), bottom: circleOffset()}}
+            style={`left: ${circleOffset()}; bottom: ${circleOffset()};`}
           />
           <div
             ref={(el) => store.rightBottomEl = el}
             class="media-editor__resizable-container-circle"
-            style={{right: circleOffset(), bottom: circleOffset()}}
+            style={`right: ${circleOffset()}; bottom: ${circleOffset()};`}
           />
         </div>
       </Portal>

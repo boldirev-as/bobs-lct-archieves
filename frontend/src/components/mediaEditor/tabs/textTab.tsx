@@ -17,6 +17,7 @@ import TabContent from './tabContent';
 import { ScrollableYTsx } from '../../chat/topbarSearch';
 import EditLineTab from './editLineTab';
 import BottomButton from '../bottomButton';
+import { useParagraphThumbnails } from '../useParagraphThumbnails';
 
 type TextTabMode = 'full' | 'paragraphs' | 'entitycreate' | 'entities' | 'editline';
 
@@ -37,6 +38,9 @@ export default function TextTab() {
   
   // Tab mode state
   const [currentMode, setCurrentMode] = createSignal<TextTabMode>('full');
+  
+  // Paragraph thumbnails hook
+  const paragraphThumbnails = useParagraphThumbnails();
 
   // Effect to switch to entity creation mode when block is selected
   createEffect(() => {
@@ -55,7 +59,6 @@ export default function TextTab() {
     const textAnnotation = editorState.targetFile.result.result.textAnnotation;
     console.log('Found textAnnotation:', textAnnotation);
     
-    // Extract text from blocks
     if (textAnnotation.blocks && textAnnotation.blocks.length > 0) {
       return textAnnotation.blocks
         .map((block: any) => {
@@ -99,11 +102,75 @@ export default function TextTab() {
     });
   });
 
-  // Extract images/visual elements (placeholder for now)
+  // Extract images/visual elements from OCR results
   const ocrImages = createMemo((): any[] => {
-    // В будущем здесь можно будет извлекать информацию о найденных изображениях/элементах
-    return [];
+    console.log('OCR Images Debug:', {
+      targetFile: editorState.targetFile,
+      result: editorState.targetFile?.result,
+      textAnnotation: editorState.targetFile?.result?.result?.textAnnotation,
+      pictures: editorState.targetFile?.result?.result?.textAnnotation?.pictures
+    });
+    
+    if (!editorState.targetFile?.result?.result?.textAnnotation?.pictures) {
+      console.log('No pictures found in OCR data');
+      return [];
+    }
+    
+    const images = editorState.targetFile.result.result.textAnnotation.pictures.map((picture: any, index: number) => ({
+      id: index,
+      boundingBox: picture.boundingBox,
+      score: picture.score,
+      // Calculate position and dimensions
+      x: parseInt(picture.boundingBox.vertices[0].x),
+      y: parseInt(picture.boundingBox.vertices[0].y),
+      width: Math.abs(parseInt(picture.boundingBox.vertices[2].x) - parseInt(picture.boundingBox.vertices[0].x)),
+      height: Math.abs(parseInt(picture.boundingBox.vertices[2].y) - parseInt(picture.boundingBox.vertices[0].y))
+    }));
+    
+    console.log('Processed images:', images);
+    return images;
   });
+
+  // Function to find images that overlap with a paragraph
+  const getImagesForParagraph = (paragraphBoundingBox: any) => {
+    if (!paragraphBoundingBox?.vertices) {
+      console.log('No paragraph bounding box vertices');
+      return [];
+    }
+    
+    const paragraphX1 = parseInt(paragraphBoundingBox.vertices[0].x);
+    const paragraphY1 = parseInt(paragraphBoundingBox.vertices[0].y);
+    const paragraphX2 = parseInt(paragraphBoundingBox.vertices[2].x);
+    const paragraphY2 = parseInt(paragraphBoundingBox.vertices[2].y);
+    
+    console.log('Paragraph bounds:', { paragraphX1, paragraphY1, paragraphX2, paragraphY2 });
+    console.log('All OCR images:', ocrImages());
+    
+    const matchingImages = ocrImages().filter(image => {
+      const imageX1 = image.x;
+      const imageY1 = image.y;
+      const imageX2 = image.x + image.width;
+      const imageY2 = image.y + image.height;
+      
+      // Check if image overlaps with paragraph (with some tolerance)
+      const tolerance = 20;
+      const overlaps = !(imageX2 < paragraphX1 - tolerance || 
+               imageX1 > paragraphX2 + tolerance || 
+               imageY2 < paragraphY1 - tolerance || 
+               imageY1 > paragraphY2 + tolerance);
+      
+      console.log('Image overlap check:', {
+        image: { x: imageX1, y: imageY1, width: image.width, height: image.height },
+        paragraph: { x1: paragraphX1, y1: paragraphY1, x2: paragraphX2, y2: paragraphY2 },
+        overlaps
+      });
+      
+      return overlaps;
+    });
+    
+    console.log('Matching images for paragraph:', matchingImages);
+    return matchingImages;
+  };
 
   // Full text component
   const FullTextMode = () => (
@@ -126,8 +193,136 @@ export default function TextTab() {
 
   const ParagraphsMode = () => {
     const handleParagraphClick = (blockIndex: number) => {
+      // Сохраняем оригинальное состояние слоя перед редактированием
+      if (editorState.targetFile?.textLayers) {
+        const layer = editorState.targetFile.textLayers.find(l => l.ocrBlockIndex === blockIndex);
+        if (layer) {
+          // Deep copy of layer state
+          editorState.originalLayerState = JSON.parse(JSON.stringify(layer));
+        }
+      }
+      
       // Выбираем блок для редактирования
       editorState.selectedBlock = {blockIndex};
+      editorState.isEditingParagraph = true;
+      editorState.editingBlockIndex = blockIndex;
+      setCurrentMode('editline');
+    };
+
+    const handleParagraphHover = (blockIndex: number) => {
+      // Имитируем состояние редактирования при наведении
+      editorState.selectedBlock = {blockIndex};
+      editorState.isEditingParagraph = true;
+      editorState.editingBlockIndex = blockIndex;
+    };
+
+    const handleParagraphLeave = () => {
+      // Сбрасываем состояние при уходе курсора
+      editorState.selectedBlock = undefined;
+      editorState.isEditingParagraph = false;
+      editorState.editingBlockIndex = undefined;
+    };
+    
+    const handleAddParagraph = () => {
+      if (!editorState.targetFile) return;
+      
+      const file = editorState.targetFile;
+      
+      // Ensure OCR structure exists
+      if (!file.result) {
+        file.result = {result: {textAnnotation: {blocks: [], width: '800', height: '600', fullText: ''}}};
+      }
+      if (!file.result.result) {
+        file.result.result = {textAnnotation: {blocks: [], width: '800', height: '600', fullText: ''}};
+      }
+      if (!file.result.result.textAnnotation) {
+        file.result.result.textAnnotation = {blocks: [], width: '800', height: '600', fullText: ''};
+      }
+      if (!file.result.result.textAnnotation.blocks) {
+        file.result.result.textAnnotation.blocks = [];
+      }
+      
+      const blocks = file.result.result.textAnnotation.blocks;
+      const newBlockIndex = blocks.length;
+      
+      // Get image dimensions for positioning
+      const imageWidth = parseInt(file.result.result.textAnnotation.width) || file.imageDimensions?.[0] || 800;
+      const imageHeight = parseInt(file.result.result.textAnnotation.height) || file.imageDimensions?.[1] || 600;
+      
+      // Position new block in center
+      const blockWidth = 300;
+      const blockHeight = 100;
+      const left = (imageWidth - blockWidth) / 2;
+      const top = (imageHeight - blockHeight) / 2;
+      
+      // Create new OCR block
+      const newBlock = {
+        boundingBox: {
+          vertices: [
+            {x: left.toString(), y: top.toString()},
+            {x: (left + blockWidth).toString(), y: top.toString()},
+            {x: (left + blockWidth).toString(), y: (top + blockHeight).toString()},
+            {x: left.toString(), y: (top + blockHeight).toString()}
+          ]
+        },
+        lines: [
+          {
+            text: 'Новый абзац',
+            words: [{text: 'Новый абзац', boundingBox: {vertices: []}}],
+            boundingBox: {vertices: []},
+            textSegments: []
+          }
+        ]
+      };
+      
+      blocks.push(newBlock);
+      
+      // Create new text layer
+      if (!file.textLayers) {
+        file.textLayers = [];
+      }
+      
+      const newLayer = {
+        id: Date.now() + Math.random(),
+        type: 'text' as const,
+        position: [left, top] as [number, number],
+        basePosition: [left, top] as [number, number],
+        rotation: 0,
+        scale: 1,
+        baseScale: 1,
+        width: blockWidth,
+        height: blockHeight,
+        baseWidth: blockWidth,
+        baseHeight: blockHeight,
+        ocrBlockIndex: newBlockIndex,
+        textInfo: {
+          font: 'roboto' as any,
+          size: 24,
+          color: '#ffffff',
+          alignment: 'left' as const,
+          style: 'normal' as const
+        },
+        textRenderingInfo: {
+          width: blockWidth,
+          height: blockHeight,
+          lines: [{
+            left: 0,
+            right: blockWidth,
+            content: 'Новый абзац',
+            height: blockHeight
+          }]
+        }
+      };
+      
+      file.textLayers.push(newLayer);
+      
+      // Mark as new paragraph (not saved yet)
+      editorState.originalLayerState = {isNew: true, blockIndex: newBlockIndex};
+      
+      // Open editor for new paragraph
+      editorState.selectedBlock = {blockIndex: newBlockIndex};
+      editorState.isEditingParagraph = true;
+      editorState.editingBlockIndex = newBlockIndex;
       setCurrentMode('editline');
     };
 
@@ -150,17 +345,121 @@ export default function TextTab() {
                   </div>
                 }
               >
-                {ocrParagraphs().map((paragraph, index) => (
-                  <div
-                    class="media-editor__ocr-paragraph-wrapper"
-                  >
-                    <div onClick={() => handleParagraphClick(paragraph.id)} use:ripple class="media-editor__ocr-paragraph">
-                      <div class="media-editor__ocr-paragraph-text">
-                        {paragraph.text}
+                {ocrParagraphs().map((paragraph, index) => {
+                  const paragraphImages = getImagesForParagraph(paragraph.boundingBox);
+                  console.log(`Paragraph ${index} images:`, paragraphImages);
+                  console.log(`Paragraph ${index} details:`, {
+                    id: paragraph.id,
+                    text: paragraph.text.substring(0, 50) + '...',
+                    boundingBox: paragraph.boundingBox
+                  });
+                  
+                  // Get thumbnail for this paragraph
+                  const [thumbnail, setThumbnail] = createSignal<string | null>(null);
+                  
+                  // Load thumbnail when component mounts
+                  createEffect(async () => {
+                    console.log('TextTab: Loading thumbnail for paragraph:', paragraph.id, 'index:', index);
+                    const thumb = await paragraphThumbnails.getThumbnail(paragraph.id);
+                    console.log('TextTab: Received thumbnail for paragraph:', paragraph.id, 'thumbnail:', !!thumb);
+                    setThumbnail(thumb);
+                  });
+                  
+                  return (
+                    <div
+                      class="media-editor__ocr-paragraph-wrapper"
+                      onMouseEnter={() => handleParagraphHover(paragraph.id)}
+                      onMouseLeave={handleParagraphLeave}
+                    >
+                      <div onClick={() => handleParagraphClick(paragraph.id)} use:ripple class="media-editor__ocr-paragraph">
+                        <div class="media-editor__ocr-paragraph-content">
+                          <Show when={thumbnail()}>
+                            <div class="media-editor__ocr-paragraph-thumbnail">
+                              <img 
+                                src={thumbnail()!} 
+                                alt={`Миниатюра абзаца ${index + 1}`}
+                                style="
+                                  width: 100%;
+                                  height: 60px;
+                                  object-fit: contain;
+                                  border-radius: 8px;
+                                  border: 2px solid var(--primary-color);
+                                  background: #f0f0f0;
+                                "
+                              />
+                            </div>
+                          </Show>
+                          <div style="font-size: 12px; color: #666; margin-top: 4px;">
+                            Thumbnail: {thumbnail() ? 'YES' : 'NO'} (paragraph {paragraph.id})
+                          </div>
+                          <div class="media-editor__ocr-paragraph-text">
+                            {paragraph.text}
+                          </div>
+                        </div>
+                        <Show when={paragraphImages.length > 0}>
+                          <div class="media-editor__ocr-paragraph-images">
+                            <div class="media-editor__ocr-paragraph-images-header">
+                              <IconTsx icon="image" />
+                              <span>Изображения ({paragraphImages.length})</span>
+                            </div>
+                            <div class="media-editor__ocr-paragraph-images-list">
+                              <For each={paragraphImages}>
+                                {(image) => (
+                                  <div 
+                                    class="media-editor__ocr-paragraph-image"
+                                    style={`
+                                      width: ${Math.min(image.width, 120)}px;
+                                      height: ${Math.min(image.height, 120)}px;
+                                      background: linear-gradient(45deg, #f0f0f0 25%, transparent 25%), 
+                                                  linear-gradient(-45deg, #f0f0f0 25%, transparent 25%), 
+                                                  linear-gradient(45deg, transparent 75%, #f0f0f0 75%), 
+                                                  linear-gradient(-45deg, transparent 75%, #f0f0f0 75%);
+                                      background-size: 20px 20px;
+                                      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+                                      border: 2px solid var(--primary-color);
+                                      border-radius: 8px;
+                                      display: flex;
+                                      align-items: center;
+                                      justify-content: center;
+                                      position: relative;
+                                      overflow: hidden;
+                                    `}
+                                    title={`Изображение ${image.id + 1} (${image.width}x${image.height}px)`}
+                                  >
+                                    <div style="
+                                      position: absolute;
+                                      top: 4px;
+                                      right: 4px;
+                                      background: var(--primary-color);
+                                      color: white;
+                                      padding: 2px 6px;
+                                      border-radius: 4px;
+                                      font-size: 10px;
+                                      font-weight: 500;
+                                    ">
+                                      {Math.round(parseFloat(image.score) * 100)}%
+                                    </div>
+                                    <div style="
+                                      display: flex;
+                                      flex-direction: column;
+                                      align-items: center;
+                                      gap: 4px;
+                                      color: var(--secondary-text-color);
+                                      font-size: 12px;
+                                    ">
+                                      <IconTsx icon="image" />
+                                      <span>{image.width}×{image.height}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </For>
+                            </div>
+                          </div>
+                        </Show>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </Show>
             </div>
           </div>
@@ -168,10 +467,7 @@ export default function TextTab() {
         
         <BottomButton
           icon="plus"
-          onClick={() => {
-            // TODO: Добавить функциональность добавления абзаца
-            console.log('Добавить абзац');
-          }}
+          onClick={handleAddParagraph}
           style="bottom: 120px"
         >
           Добавить абзац
@@ -187,8 +483,16 @@ export default function TextTab() {
     };
 
     const handleEntityClick = (entity: any) => {
-      // TODO: Handle entity click - maybe edit or view details
-      console.log('Entity clicked:', entity);
+      // Save original entity state before editing
+      editorState.originalEntityState = JSON.parse(JSON.stringify(entity));
+      editorState.editingEntityId = entity.id;
+      
+      // Set the block that contains this entity
+      actions.setSelectedBlock({ blockIndex: entity.blockIndex });
+      
+      // Open entity creation/editing mode
+      setCurrentMode('entitycreate');
+      actions.setEntityCreationMode('selectblock');
     };
     
     const handleDeleteEntity = (entityId: string) => {
@@ -264,12 +568,26 @@ export default function TextTab() {
     // State for entity type selection
     const [selectedEntityType, setSelectedEntityType] = createSignal<EntityType>('другое');
     
+    // Check if we're editing an existing entity
+    const isEditingExisting = () => !!editorState.editingEntityId;
+    
     // Initialize slider values when block is selected
     createEffect(() => {
       const block = selectedBlock();
       if (block) {
         const charCount = getBlockCharCount();
-        setSliderValues({start: 0, end: charCount});
+        
+        // If editing existing entity, initialize with its values
+        if (isEditingExisting() && editorState.originalEntityState) {
+          setSliderValues({
+            start: editorState.originalEntityState.startIndex,
+            end: editorState.originalEntityState.endIndex
+          });
+          setSelectedEntityType(editorState.originalEntityState.type || 'другое');
+        } else {
+          // New entity - select all text
+          setSliderValues({start: 0, end: charCount});
+        }
       }
     });
     
@@ -324,7 +642,7 @@ export default function TextTab() {
       }));
     };
     
-    // Create entity from selected text
+    // Create or update entity from selected text
     const handleCreateEntity = () => {
       const block = selectedBlock();
       const selected = editorState.selectedBlock;
@@ -334,16 +652,40 @@ export default function TextTab() {
         const selectedText = block.text.substring(start, end);
         
         if (selectedText.trim()) {
-          // Create entity using context action
-          const entityId = actions.createEntity(
-            selected.blockIndex,
-            selectedText,
-            start,
-            end,
-            selectedEntityType()
-          );
+          if (isEditingExisting() && editorState.editingEntityId) {
+            // Update existing entity
+            if (editorState.targetFile?.result?.result?.textAnnotation?.entities) {
+              const entities = editorState.targetFile.result.result.textAnnotation.entities;
+              const entityIndex = entities.findIndex(e => e.id === editorState.editingEntityId);
+              
+              if (entityIndex !== -1) {
+                entities[entityIndex] = {
+                  ...entities[entityIndex],
+                  text: selectedText,
+                  startIndex: start,
+                  endIndex: end,
+                  type: selectedEntityType()
+                };
+              }
+            }
+            
+            console.log('Updated entity with ID:', editorState.editingEntityId);
+          } else {
+            // Create new entity using context action
+            const entityId = actions.createEntity(
+              selected.blockIndex,
+              selectedText,
+              start,
+              end,
+              selectedEntityType()
+            );
+            
+            console.log('Created entity with ID:', entityId);
+          }
           
-          console.log('Created entity with ID:', entityId);
+          // Clear editing state
+          editorState.editingEntityId = undefined;
+          editorState.originalEntityState = undefined;
           
           // Reset state and go back to entities mode
           actions.setSelectedBlock(undefined);
@@ -353,11 +695,6 @@ export default function TextTab() {
         }
       }
     };
-
-    onCleanup(() => {
-      actions.setSelectedBlock(undefined);
-      actions.setEntityCreationMode(undefined);
-    });
     
     return (
       <>
@@ -367,6 +704,22 @@ export default function TextTab() {
               <button
                 class="media-editor__edit-line-back-btn"
                 onClick={() => {
+                  // Restore original entity state if editing
+                  if (isEditingExisting() && editorState.originalEntityState && editorState.targetFile) {
+                    const entities = editorState.targetFile.result?.result?.textAnnotation?.entities;
+                    if (entities) {
+                      const entityIndex = entities.findIndex(e => e.id === editorState.editingEntityId);
+                      if (entityIndex !== -1) {
+                        // Restore original entity
+                        entities[entityIndex] = editorState.originalEntityState;
+                      }
+                    }
+                  }
+                  
+                  // Clear editing state
+                  editorState.editingEntityId = undefined;
+                  editorState.originalEntityState = undefined;
+                  
                   actions.setSelectedBlock(undefined);
                   actions.setEntityCreationMode(undefined);
                   setSliderValues({start: 0, end: 0});
@@ -377,8 +730,8 @@ export default function TextTab() {
               >
                 <IconTsx icon="left" />
               </button>
-              <div style="margin-left: 8px" class="media-editor__edit-line-editor-title">
-                Создание образа
+              <div style="margin-left: -8px" class="media-editor__edit-line-editor-title">
+                {isEditingExisting() ? 'Редактирование образа' : 'Создание образа'}
               </div>
             </div>
             
@@ -444,7 +797,7 @@ export default function TextTab() {
           disabled={sliderValues().start === sliderValues().end}
           style="bottom: 120px"
         >
-          Создать образ
+          {isEditingExisting() ? 'Сохранить' : 'Создать образ'}
         </BottomButton>
       </>
     );
@@ -498,6 +851,24 @@ export default function TextTab() {
     });
   });
 
+  createEffect(() => {
+    const isTextTabActive = editorState.currentTab === 'text';
+    const mode = currentMode();
+    
+    if (mode === 'entitycreate' && isTextTabActive && editorState.targetFile || editorState.editingEntityId && mode === 'entitycreate') {
+      actions.setEntityCreationMode('selectblock');
+    } else {
+      actions.setEntityCreationMode(undefined);
+      editorState.isOverlayOpen = false;
+    }
+    
+    if (mode === 'editline' && isTextTabActive && editorState.targetFile) {
+      editorState.isEditingParagraph = true;
+    } else {
+      editorState.isEditingParagraph = false;
+    }
+  });
+
   return (
     <Show 
       when={editorState.targetFile} 
@@ -544,6 +915,9 @@ export default function TextTab() {
                 selectedLine={editorState.selectedBlock}
                 onBack={() => {
                   editorState.selectedBlock = undefined;
+                  editorState.isEditingParagraph = false;
+                  editorState.editingBlockIndex = undefined;
+                  editorState.originalLayerState = undefined;
                   setCurrentMode('paragraphs');
                 }}
               />,

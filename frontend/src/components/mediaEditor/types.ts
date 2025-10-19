@@ -94,6 +94,10 @@ export type UploadedFile = {
             y: string;
           }>;
         };
+        renderingVertices?: Array<{
+          x: string;
+          y: string;
+        }>;
         lines: Array<{
           boundingBox: {
             vertices: Array<{

@@ -30,8 +30,9 @@ const serverOptions: ServerOptions = {
     interval: 1000
   },
   hmr: {
-    port: 8080, // Use same port for HMR
-    host: '0.0.0.0'
+    // Let the client use the same port it's accessing the page from
+    // Works both through nginx (:80) and direct access (:8080)
+    protocol: 'ws'
   },
   sourcemapIgnoreList(sourcePath, sourcemapPath) {
     return sourcePath.includes('node_modules') || sourcePath.includes('logger');

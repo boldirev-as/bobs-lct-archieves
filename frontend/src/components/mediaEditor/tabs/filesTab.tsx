@@ -88,17 +88,17 @@ function FileItem(props: {file: UploadedFile}) {
             </div>
           </Show>
           
-          <Show when={props.file.result?.textAnnotation}>
+          <Show when={props.file.result?.result?.textAnnotation}>
             <div class="file-item__ocr-result">
               <strong>OCR Result:</strong>
               <div class="file-item__ocr-text">
-                {props.file.result.textAnnotation.fullText}
+                {props.file.result.result.textAnnotation.fullText}
               </div>
-              <Show when={props.file.result.textAnnotation.markdown}>
+              <Show when={props.file.result.result.textAnnotation.markdown}>
                 <div class="file-item__markdown">
                   <strong>Markdown:</strong>
                   <pre class="file-item__markdown-content">
-                    {props.file.result.textAnnotation.markdown}
+                    {props.file.result.result.textAnnotation.markdown}
                   </pre>
                 </div>
               </Show>
@@ -113,6 +113,7 @@ function FileItem(props: {file: UploadedFile}) {
 export default function FilesTab() {
   const {mediaState, editorState, actions} = useMediaEditorContext();
   const [isDragOver, setIsDragOver] = createSignal(false);
+  const [isUploadingFolder, setIsUploadingFolder] = createSignal(false);
   let fileInputRef: HTMLInputElement;
 
   const handleFileSelect = async (files: FileList) => {
@@ -126,12 +127,57 @@ export default function FilesTab() {
     }
   };
 
+  const handleFolderSelect = async (files: FileList) => {
+    setIsUploadingFolder(true);
+    let uploadedCount = 0;
+    let totalFiles = 0;
+    
+    // Подсчитываем общее количество файлов
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/') || file.type === 'application/pdf') {
+        totalFiles++;
+      }
+    }
+    
+    console.log(`Найдено ${totalFiles} изображений и PDF файлов в папке`);
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      
+      // Фильтруем только изображения и PDF
+      if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+        continue;
+      }
+      
+      try {
+        await actions.uploadFile(file);
+        uploadedCount++;
+        console.log(`Загружено ${uploadedCount}/${totalFiles}: ${file.name}`);
+      } catch (error) {
+        console.error(`Failed to upload file ${file.name}:`, error);
+      }
+    }
+    
+    setIsUploadingFolder(false);
+    console.log(`Загрузка папки завершена. Загружено ${uploadedCount} из ${totalFiles} файлов`);
+  };
+
   const handleDrop = (e: DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     
     if (e.dataTransfer?.files) {
-      handleFileSelect(e.dataTransfer.files);
+      // Проверяем, содержит ли drop папку (webkitdirectory)
+      const hasDirectory = Array.from(e.dataTransfer.files).some(file => 
+        file.webkitRelativePath && file.webkitRelativePath.includes('/')
+      );
+      
+      if (hasDirectory) {
+        handleFolderSelect(e.dataTransfer.files);
+      } else {
+        handleFileSelect(e.dataTransfer.files);
+      }
     }
   };
 
@@ -176,7 +222,7 @@ export default function FilesTab() {
             <strong>Click to upload</strong> or drag and drop files here
           </div>
           <div class="files-tab__upload-hint">
-            Supports images only (JPG, PNG, GIF, etc.)
+            Supports images (JPG, PNG, GIF, etc.) and PDF files
           </div>
         </div>
         
@@ -184,11 +230,18 @@ export default function FilesTab() {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/*"
+          accept="image/*,application/pdf"
           style="display: none"
+          {...({webkitdirectory: ""} as any)}
           onChange={(e) => {
             if (e.target.files) {
-              handleFileSelect(e.target.files);
+              // Проверяем, выбрана ли папка (webkitdirectory)
+              const isDirectory = e.target.hasAttribute('webkitdirectory');
+              if (isDirectory) {
+                handleFolderSelect(e.target.files);
+              } else {
+                handleFileSelect(e.target.files);
+              }
             }
           }}
         />
